@@ -1,72 +1,72 @@
 const AiModel = require('../models/AiModel');
+const Category = require('../models/Category');
+const ModelCharacteristic = require('../models/ModelCharacteristic');
+const ScoreHistory = require('../models/ScoreHistory');
+const ModelComparison = require('../models/ModelComparison');
+const logger = require('../utils/logger');
+const { cacheMiddleware } = require('../middleware/cache');
 
-class AiModelController {
+const aiModelController = {
     // Obtener todos los modelos de IA
-    static async getAllModels(req, res) {
+    async getModels(req, res) {
         try {
-            const { category, page = 1, limit = 10 } = req.query;
-            const offset = (page - 1) * limit;
-
-            const models = await AiModel.findAll({
-                category,
-                limit: parseInt(limit),
-                offset: parseInt(offset)
-            });
-
-            res.json({
-                success: true,
-                data: models,
-                pagination: {
-                    page: parseInt(page),
-                    limit: parseInt(limit)
-                }
-            });
+            const models = await AiModel.findAll();
+            res.json(models);
         } catch (error) {
-            console.error('Error al obtener modelos:', error);
-            res.status(500).json({
-                success: false,
-                error: 'Error al obtener los modelos de IA'
-            });
+            console.error('Error getting models:', error);
+            res.status(500).json({ message: 'Error al obtener los modelos' });
         }
-    }
+    },
 
     // Obtener un modelo específico
-    static async getModelById(req, res) {
+    async getModelById(req, res) {
         try {
             const { id } = req.params;
-            const model = await AiModel.findById(id);
-
+            const model = await AiModel.findById(parseInt(id));
+            
             if (!model) {
                 return res.status(404).json({
                     success: false,
-                    error: 'Modelo de IA no encontrado'
+                    error: 'Modelo no encontrado'
                 });
             }
 
+            // Obtener características y historial de puntuaciones
+            const [characteristics, scoreHistory] = await Promise.all([
+                ModelCharacteristic.findByModelId(parseInt(id)),
+                ScoreHistory.findByModelId(parseInt(id))
+            ]);
+
             res.json({
                 success: true,
-                data: model
+                data: {
+                    ...model,
+                    characteristics,
+                    scoreHistory
+                }
             });
         } catch (error) {
-            console.error('Error al obtener modelo:', error);
+            logger.error('Error en getModelById:', error);
             res.status(500).json({
                 success: false,
-                error: 'Error al obtener el modelo de IA'
+                error: 'Error al obtener el modelo'
             });
         }
-    }
+    },
 
     // Crear nuevo modelo de IA
-    static async createModel(req, res) {
+    async createModel(req, res) {
         try {
-            const { name, developer, release_date, description, category } = req.body;
+            const { name, developer, category_id, description, release_date } = req.body;
 
             const newModel = await AiModel.create({
                 name,
                 developer,
-                release_date,
+                category_id,
                 description,
-                category
+                release_date,
+                likes: 0,
+                dislikes: 0
             });
 
             res.status(201).json({
@@ -75,51 +75,45 @@ class AiModelController {
                 data: newModel
             });
         } catch (error) {
-            console.error('Error al crear modelo:', error);
+            console.error('Error creating model:', error);
             res.status(500).json({
                 success: false,
                 error: 'Error al crear el modelo de IA'
             });
         }
-    }
+    },
 
     // Actualizar modelo de IA
-    static async updateModel(req, res) {
+    async updateModel(req, res) {
         try {
             const { id } = req.params;
-            const { name, developer, release_date, description, category } = req.body;
+            const updateData = req.body;
 
-            const updatedModel = await AiModel.update(id, {
-                name,
-                developer,
-                release_date,
-                description,
-                category
-            });
+            const updatedModel = await AiModel.update(parseInt(id), updateData);
 
             if (!updatedModel) {
                 return res.status(404).json({
                     success: false,
-                    error: 'Modelo de IA no encontrado'
+                    error: 'Modelo no encontrado'
                 });
             }
 
             res.json({
                 success: true,
-                message: 'Modelo de IA actualizado exitosamente',
-                data: updatedModel
+                data: updatedModel,
+                message: 'Modelo actualizado exitosamente'
             });
         } catch (error) {
-            console.error('Error al actualizar modelo:', error);
+            logger.error('Error en updateModel:', error);
             res.status(500).json({
                 success: false,
-                error: 'Error al actualizar el modelo de IA'
+                error: 'Error al actualizar el modelo'
             });
         }
-    }
+    },
 
     // Actualizar estadísticas del modelo
-    static async updateStatistics(req, res) {
+    async updateStatistics(req, res) {
         try {
             const { id } = req.params;
             const { metric, value } = req.body;
@@ -141,10 +135,10 @@ class AiModelController {
                 error: 'Error al actualizar las estadísticas'
             });
         }
-    }
+    },
 
     // Actualizar ranking del modelo
-    static async updateRanking(req, res) {
+    async updateRanking(req, res) {
         try {
             const { id } = req.params;
             const { category, rank, score } = req.body;
@@ -167,38 +161,183 @@ class AiModelController {
                 error: 'Error al actualizar el ranking'
             });
         }
-    }
+    },
 
     // Votar por un modelo
-    static async voteModel(req, res) {
+    async voteModel(req, res) {
         try {
             const { id } = req.params;
-            const { vote } = req.body;
-            const userId = req.user.userId; // Desde el middleware de auth
+            const { voteType } = req.body;
 
-            // Validar el voto (1 o -1)
-            if (vote !== 1 && vote !== -1) {
+            if (!['like', 'dislike'].includes(voteType)) {
                 return res.status(400).json({
                     success: false,
-                    error: 'El voto debe ser 1 (positivo) o -1 (negativo)'
+                    error: 'Tipo de voto inválido'
                 });
             }
 
-            const userVote = await AiModel.vote(id, userId, vote);
+            const updatedModel = await AiModel.voteModel(id, voteType);
 
             res.json({
                 success: true,
-                message: 'Voto registrado exitosamente',
-                data: userVote
+                data: updatedModel
             });
         } catch (error) {
-            console.error('Error al registrar voto:', error);
+            console.error('Error voting model:', error);
             res.status(500).json({
                 success: false,
-                error: 'Error al registrar el voto'
+                error: 'Error al votar el modelo'
+            });
+        }
+    },
+
+    async getModelMetrics(req, res) {
+        try {
+            const { id } = req.params;
+            const metrics = await AiModel.getModelMetrics(id);
+
+            res.json({
+                success: true,
+                data: metrics
+            });
+        } catch (error) {
+            console.error('Error fetching metrics:', error);
+            res.status(500).json({
+                success: false,
+                error: 'Error al obtener las métricas del modelo'
+            });
+        }
+    },
+
+    async deleteModel(req, res) {
+        try {
+            const { id } = req.params;
+            const result = await AiModel.delete(parseInt(id));
+
+            if (!result) {
+                return res.status(404).json({
+                    success: false,
+                    error: 'Modelo no encontrado'
+                });
+            }
+
+            res.json({
+                success: true,
+                message: 'Modelo eliminado exitosamente'
+            });
+        } catch (error) {
+            logger.error('Error en deleteModel:', error);
+            res.status(500).json({
+                success: false,
+                error: 'Error al eliminar el modelo'
+            });
+        }
+    },
+
+    async addModelMetrics(req, res) {
+        try {
+            const { id } = req.params;
+            const { characteristic_name, value } = req.body;
+
+            const newMetric = await ModelCharacteristic.create(id, {
+                name: characteristic_name,
+                value
+            });
+
+            res.status(201).json({
+                success: true,
+                data: newMetric
+            });
+        } catch (error) {
+            console.error('Error adding metric:', error);
+            res.status(500).json({
+                success: false,
+                error: 'Error al añadir la métrica'
+            });
+        }
+    },
+
+    async updateModelMetrics(req, res) {
+        try {
+            const { id, metricId } = req.params;
+            const { value } = req.body;
+
+            const updatedMetric = await ModelCharacteristic.update(metricId, value);
+
+            res.json({
+                success: true,
+                data: updatedMetric
+            });
+        } catch (error) {
+            console.error('Error updating metric:', error);
+            res.status(500).json({
+                success: false,
+                error: 'Error al actualizar la métrica'
+            });
+        }
+    },
+
+    async deleteModelMetrics(req, res) {
+        try {
+            const { id, metricId } = req.params;
+            await ModelCharacteristic.delete(metricId);
+
+            res.json({
+                success: true,
+                message: 'Métrica eliminada exitosamente'
+            });
+        } catch (error) {
+            console.error('Error deleting metric:', error);
+            res.status(500).json({
+                success: false,
+                error: 'Error al eliminar la métrica'
+            });
+        }
+    },
+
+    async addCharacteristic(req, res) {
+        try {
+            const { modelId } = req.params;
+            const characteristicData = {
+                model_id: parseInt(modelId),
+                ...req.body
+            };
+
+            const characteristic = await ModelCharacteristic.add(characteristicData);
+
+            res.status(201).json({
+                success: true,
+                data: characteristic
+            });
+        } catch (error) {
+            logger.error('Error en addCharacteristic:', error);
+            res.status(500).json({
+                success: false,
+                error: 'Error al agregar característica'
+            });
+        }
+    },
+
+    async compareModels(req, res) {
+        try {
+            const { modelId1, modelId2 } = req.params;
+            const comparison = await ModelComparison.compare(
+                parseInt(modelId1),
+                parseInt(modelId2)
+            );
+
+            res.json({
+                success: true,
+                data: comparison
+            });
+        } catch (error) {
+            logger.error('Error en compareModels:', error);
+            res.status(500).json({
+                success: false,
+                error: 'Error al comparar modelos'
             });
         }
     }
-}
+};
 
-module.exports = AiModelController; 
+module.exports = aiModelController; 

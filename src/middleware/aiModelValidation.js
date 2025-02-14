@@ -1,55 +1,45 @@
 const validateAiModel = (req, res, next) => {
-    const { name, developer, release_date, description, category } = req.body;
-    const isUpdate = req.method === 'PUT';
+    const { name, developer, category_id, description } = req.body;
 
-    // Para creación, validar todos los campos
-    // Para actualización, validar solo los campos presentes
-    if (name && name.trim().length < 2) {
+    if (!name || !developer || !category_id || !description) {
         return res.status(400).json({
             success: false,
-            error: 'El nombre del modelo debe tener al menos 2 caracteres'
+            error: 'Todos los campos son requeridos: name, developer, category_id, description'
         });
     }
 
-    if (developer && developer.trim().length < 2) {
+    next();
+};
+
+const validateMetrics = (req, res, next) => {
+    const { characteristic_name, value } = req.body;
+
+    const validCharacteristics = [
+        'precision',
+        'exactitud',
+        'sensibilidad',
+        'puntuacion_f1',
+        'perdida',
+        'tiempo_inferencia',
+        'uso_memoria',
+        'tasa_aprendizaje',
+        'generalizacion',
+        'robustez',
+        'eficiencia_computacional',
+        'convergencia'
+    ];
+
+    if (!characteristic_name || !validCharacteristics.includes(characteristic_name)) {
         return res.status(400).json({
             success: false,
-            error: 'El nombre del desarrollador debe tener al menos 2 caracteres'
+            error: `La característica debe ser una de las siguientes: ${validCharacteristics.join(', ')}`
         });
     }
 
-    if (release_date) {
-        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-        if (!dateRegex.test(release_date)) {
-            return res.status(400).json({
-                success: false,
-                error: 'La fecha debe tener el formato YYYY-MM-DD'
-            });
-        }
-    }
-
-    if (description && description.trim().length < 10) {
+    if (typeof value !== 'number' || value < 0 || value > 100) {
         return res.status(400).json({
             success: false,
-            error: 'La descripción debe tener al menos 10 caracteres'
-        });
-    }
-
-    if (category) {
-        const validCategories = ['text', 'image', 'video', 'audio', 'code', 'multimodal'];
-        if (!validCategories.includes(category)) {
-            return res.status(400).json({
-                success: false,
-                error: `La categoría debe ser una de las siguientes: ${validCategories.join(', ')}`
-            });
-        }
-    }
-
-    // Si es creación, verificar que todos los campos requeridos estén presentes
-    if (!isUpdate && (!name || !developer || !description || !category)) {
-        return res.status(400).json({
-            success: false,
-            error: 'Todos los campos son requeridos para crear un modelo'
+            error: 'El valor debe ser un número entre 0 y 100'
         });
     }
 
@@ -112,6 +102,7 @@ const validateRanking = (req, res, next) => {
 
 module.exports = {
     validateAiModel,
+    validateMetrics,
     validateStatistics,
     validateRanking
 }; 

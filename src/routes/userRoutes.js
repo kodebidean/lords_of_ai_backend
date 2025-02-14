@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const UserController = require('../controllers/userController');
-const auth = require('../middleware/auth');
+const userController = require('../controllers/userController');
+const { validateToken } = require('../middleware/auth');
 const { 
     validateRegistration, 
     validateLogin, 
@@ -9,11 +9,15 @@ const {
 } = require('../middleware/validation');
 
 // Rutas públicas
-router.post('/register', validateRegistration, UserController.register);
-router.post('/login', validateLogin, UserController.login);
+router.post('/register', validateRegistration, userController.register);
+router.post('/login', validateLogin, userController.login);
 
-// Rutas protegidas (requieren autenticación)
-router.get('/profile', auth, UserController.getProfile);
-router.put('/profile', [auth, validateProfileUpdate], UserController.updateProfile);
+// Rutas protegidas
+router.get('/profile', validateToken, userController.getProfile);
+router.put('/profile', validateToken, userController.updateProfile);
+
+// Si tienes una ruta que está causando el error, asegúrate de que tenga un controlador válido
+// Por ejemplo, esta es la forma correcta:
+router.get('/users', validateToken, userController.getAllUsers);
 
 module.exports = router; 

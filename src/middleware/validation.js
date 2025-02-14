@@ -1,3 +1,24 @@
+const Joi = require('joi');
+
+const modelSchema = Joi.object({
+  name: Joi.string().required().min(3).max(100),
+  developer: Joi.string().required(),
+  category_id: Joi.number().required(),
+  description: Joi.string().required().min(10),
+  release_date: Joi.date().iso().required()
+});
+
+const validateModel = (req, res, next) => {
+  const { error } = modelSchema.validate(req.body);
+  if (error) {
+    return res.status(400).json({
+      success: false,
+      error: error.details[0].message
+    });
+  }
+  next();
+};
+
 const validateRegistration = (req, res, next) => {
     const { username, email, password } = req.body;
 
@@ -68,5 +89,6 @@ const validateProfileUpdate = (req, res, next) => {
 module.exports = {
     validateRegistration,
     validateLogin,
-    validateProfileUpdate
+    validateProfileUpdate,
+    validateModel
 }; 

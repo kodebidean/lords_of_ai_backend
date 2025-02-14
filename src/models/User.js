@@ -1,5 +1,7 @@
 const pool = require('../config/database');
 const bcrypt = require('bcrypt');
+const { QueryTypes } = require('sequelize');
+const sequelize = require('../config/sequelize');
 
 class User {
     static async create({ username, email, password, profile_image_url = null, bio = null }) {
@@ -20,10 +22,14 @@ class User {
 
     static async findByEmail(email) {
         try {
-            const query = 'SELECT * FROM users WHERE email = $1';
+            const query = `
+                SELECT user_id, username, email, password_hash, created_at, profile_image_url, bio 
+                FROM users WHERE email = $1
+            `;
             const result = await pool.query(query, [email]);
             return result.rows[0];
         } catch (error) {
+            console.error('Error completo en findByEmail:', error);
             throw new Error(`Error finding user: ${error.message}`);
         }
     }

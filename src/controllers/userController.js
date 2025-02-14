@@ -1,9 +1,10 @@
 const User = require('../models/User');
+const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
-class UserController {
+const userController = {
     // Registro de usuario
-    static async register(req, res) {
+    register: async (req, res) => {
         try {
             const { username, email, password, bio } = req.body;
 
@@ -48,10 +49,10 @@ class UserController {
                 error: 'Error al registrar usuario' 
             });
         }
-    }
+    },
 
     // Login de usuario
-    static async login(req, res) {
+    login: async (req, res) => {
         try {
             const { email, password } = req.body;
 
@@ -75,11 +76,14 @@ class UserController {
                 });
             }
 
-            // Generar token
+            // Generar token con configuración explícita
             const token = jwt.sign(
                 { userId: user.user_id },
                 process.env.JWT_SECRET,
-                { expiresIn: '24h' }
+                { 
+                    expiresIn: '24h',
+                    algorithm: 'HS256' // Especificar algoritmo
+                }
             );
 
             res.json({
@@ -100,41 +104,20 @@ class UserController {
                 error: 'Error al iniciar sesión' 
             });
         }
-    }
+    },
 
     // Obtener perfil de usuario
-    static async getProfile(req, res) {
+    getProfile: async (req, res) => {
         try {
-            const userId = req.user.userId; // Viene del middleware de auth
-            const user = await User.findById(userId);
-
-            if (!user) {
-                return res.status(404).json({ 
-                    error: 'Usuario no encontrado' 
-                });
-            }
-
-            res.json({
-                user: {
-                    id: user.user_id,
-                    username: user.username,
-                    email: user.email,
-                    bio: user.bio,
-                    profile_image_url: user.profile_image_url,
-                    created_at: user.created_at
-                }
-            });
-
+            const user = await User.findByPk(req.user.id);
+            res.json(user);
         } catch (error) {
-            console.error('Error al obtener perfil:', error);
-            res.status(500).json({ 
-                error: 'Error al obtener perfil de usuario' 
-            });
+            res.status(500).json({ message: error.message });
         }
-    }
+    },
 
     // Actualizar perfil de usuario
-    static async updateProfile(req, res) {
+    updateProfile: async (req, res) => {
         try {
             const userId = req.user.userId; // Viene del middleware de auth
             const { username, email, bio, profile_image_url } = req.body;
@@ -164,7 +147,16 @@ class UserController {
                 error: 'Error al actualizar perfil de usuario' 
             });
         }
-    }
-}
+    },
 
-module.exports = UserController; 
+    getAllUsers: async (req, res) => {
+        try {
+            const users = await User.findAll();
+            res.json(users);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+    }
+};
+
+module.exports = userController; 

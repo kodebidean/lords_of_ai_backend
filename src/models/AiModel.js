@@ -1,6 +1,8 @@
-const pool = require('../config/database');
+const { Model, DataTypes } = require('sequelize');
+const sequelize = require('../config/sequelize');
+const logger = require('../utils/logger');
 
-class AiModel {
+class AiModel extends Model {
     static async create({ name, developer, release_date, description, category }) {
         try {
             const query = `
@@ -9,43 +11,69 @@ class AiModel {
                 RETURNING *
             `;
             const values = [name, developer, release_date, description, category];
-            const result = await pool.query(query, values);
+            const result = await sequelize.query(query, { replacements: values });
             return result.rows[0];
         } catch (error) {
             throw new Error(`Error creating AI model: ${error.message}`);
         }
     }
 
-    static async findAll({ category = null, limit = 10, offset = 0 }) {
+    static async findAll(options = {}) {
         try {
-            let query = `
+            const query = `
                 SELECT 
-                    m.*,
-                    r.rank,
-                    r.score,
-                    COUNT(DISTINCT uv.vote_id) as total_votes,
-                    COALESCE(SUM(uv.vote), 0) as vote_score
+                    m.model_id,
+                    m.name,
+                    m.description,
+                    m.developer,
+                    m.release_date,
+                    m.website_url,
+                    m.documentation_url,
+                    m.version,
+                    c.category_id,
+                    c.name as category_name,
+                    c.description as category_description,
+                    COALESCE(AVG(mv.score), 0) as score,
+                    COUNT(DISTINCT mv.vote_id) as total_votes
                 FROM ai_models m
-                LEFT JOIN rankings r ON m.model_id = r.model_id
-                LEFT JOIN user_votes uv ON m.model_id = uv.model_id
+                LEFT JOIN categories c ON m.category_id = c.category_id
+                LEFT JOIN model_votes mv ON m.model_id = mv.model_id
+                GROUP BY 
+                    m.model_id,
+                    m.name,
+                    m.description,
+                    m.developer,
+                    m.release_date,
+                    m.website_url,
+                    m.documentation_url,
+                    m.version,
+                    c.category_id,
+                    c.name,
+                    c.description
+                ORDER BY score DESC
             `;
 
-            const values = [];
-            if (category) {
-                query += ` WHERE m.category = $1`;
-                values.push(category);
-            }
-
-            query += `
-                GROUP BY m.model_id, r.rank, r.score
-                ORDER BY r.score DESC NULLS LAST
-                LIMIT $${values.length + 1} OFFSET $${values.length + 2}
-            `;
-            values.push(limit, offset);
-
-            const result = await pool.query(query, values);
-            return result.rows;
+            const [results] = await sequelize.query(query);
+            
+            return results.map(model => ({
+                model_id: model.model_id,
+                name: model.name,
+                description: model.description,
+                developer: model.developer,
+                release_date: model.release_date,
+                website_url: model.website_url,
+                documentation_url: model.documentation_url,
+                version: model.version,
+                score: parseFloat(model.score),
+                total_votes: parseInt(model.total_votes),
+                category: {
+                    category_id: model.category_id,
+                    category_name: model.category_name,
+                    description: model.category_description
+                }
+            }));
         } catch (error) {
+            console.error('Error en AiModel.findAll:', error);
             throw new Error(`Error fetching AI models: ${error.message}`);
         }
     }
@@ -55,43 +83,97 @@ class AiModel {
             const query = `
                 SELECT 
                     m.*,
-                    r.rank,
-                    r.score,
-                    COUNT(DISTINCT uv.vote_id) as total_votes,
-                    COALESCE(SUM(uv.vote), 0) as vote_score,
-                    json_agg(DISTINCT ms.*) as statistics
+                    c.category_name,
+                    c.icon_url as category_icon,
+                    (
+                        SELECT json_agg(
+                            json_build_object(
+                                'id', mc.characteristic_id,
+                                'name', mc.characteristic_name,
+                                'value', mc.value,
+                                'category', cc.name,
+                                'unit', cc.unit_of_measure,
+                                'confidence', mc.confidence_level
+                            )
+                        )
+                        FROM model_characteristics mc
+                        JOIN characteristic_categories cc ON mc.category_id = cc.category_id
+                        WHERE mc.model_id = m.model_id
+                    ) as characteristics,
+                    (
+                        SELECT json_agg(
+                            json_build_object(
+                                'version', mv.version_number,
+                                'date', mv.release_date,
+                                'changes', mv.changes_description,
+                                'is_major', mv.is_major_update
+                            )
+                        )
+                        FROM model_versions mv
+                        WHERE mv.model_id = m.model_id
+                        ORDER BY mv.release_date DESC
+                    ) as versions,
+                    (
+                        SELECT json_agg(
+                            json_build_object(
+                                'benchmark', b.name,
+                                'score', br.score,
+                                'date', br.test_date
+                            )
+                        )
+                        FROM benchmark_results br
+                        JOIN benchmarks b ON br.benchmark_id = b.benchmark_id
+                        WHERE br.model_id = m.model_id
+                        ORDER BY br.test_date DESC
+                    ) as benchmark_results
                 FROM ai_models m
-                LEFT JOIN rankings r ON m.model_id = r.model_id
-                LEFT JOIN user_votes uv ON m.model_id = uv.model_id
-                LEFT JOIN model_statistics ms ON m.model_id = ms.model_id
+                LEFT JOIN categories c ON m.category_id = c.category_id
                 WHERE m.model_id = $1
-                GROUP BY m.model_id, r.rank, r.score
             `;
-            const result = await pool.query(query, [modelId]);
+
+            const result = await sequelize.query(query, { replacements: [modelId] });
             return result.rows[0];
         } catch (error) {
+            logger.error('Error en AiModel.findById:', error);
             throw new Error(`Error fetching AI model: ${error.message}`);
         }
     }
 
-    static async update(modelId, { name, developer, release_date, description, category }) {
+    static async update(id, modelData) {
         try {
+            const { name, developer, category_id, description, release_date } = modelData;
             const query = `
                 UPDATE ai_models 
-                SET 
-                    name = COALESCE($1, name),
-                    developer = COALESCE($2, developer),
-                    release_date = COALESCE($3, release_date),
-                    description = COALESCE($4, description),
-                    category = COALESCE($5, category)
-                WHERE model_id = $6
+                SET name = $1, 
+                    developer = $2, 
+                    category_id = $3, 
+                    description = $4, 
+                    release_date = $5,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE model_id = $6 
                 RETURNING *
             `;
-            const values = [name, developer, release_date, description, category, modelId];
-            const result = await pool.query(query, values);
+            const values = [name, developer, category_id, description, release_date, id];
+            const result = await sequelize.query(query, { replacements: values });
             return result.rows[0];
         } catch (error) {
             throw new Error(`Error updating AI model: ${error.message}`);
+        }
+    }
+
+    static async delete(id) {
+        try {
+            // Primero eliminamos las referencias en otras tablas
+            await sequelize.query('DELETE FROM model_characteristics WHERE model_id = $1', { replacements: [id] });
+            await sequelize.query('DELETE FROM score_history WHERE model_id = $1', { replacements: [id] });
+            await sequelize.query('DELETE FROM user_votes WHERE model_id = $1', { replacements: [id] });
+            
+            // Finalmente eliminamos el modelo
+            const query = 'DELETE FROM ai_models WHERE model_id = $1';
+            await sequelize.query(query, { replacements: [id] });
+            return true;
+        } catch (error) {
+            throw new Error(`Error deleting AI model: ${error.message}`);
         }
     }
 
@@ -102,7 +184,7 @@ class AiModel {
                 VALUES ($1, $2, $3)
                 RETURNING *
             `;
-            const result = await pool.query(query, [modelId, metric, value]);
+            const result = await sequelize.query(query, { replacements: [modelId, metric, value] });
             return result.rows[0];
         } catch (error) {
             throw new Error(`Error updating AI model statistics: ${error.message}`);
@@ -112,9 +194,9 @@ class AiModel {
     static async updateRanking(modelId, { category, rank, score }) {
         try {
             // Primero verificamos si existe el modelo
-            const modelExists = await pool.query(
+            const modelExists = await sequelize.query(
                 'SELECT model_id FROM ai_models WHERE model_id = $1',
-                [modelId]
+                { replacements: [modelId] }
             );
 
             if (modelExists.rows.length === 0) {
@@ -129,7 +211,7 @@ class AiModel {
                 DO UPDATE SET rank = $3, score = $4, updated_at = CURRENT_TIMESTAMP
                 RETURNING *
             `;
-            const result = await pool.query(query, [modelId, category, rank, score]);
+            const result = await sequelize.query(query, { replacements: [modelId, category, rank, score] });
             return result.rows[0];
         } catch (error) {
             throw new Error(`Error updating AI model ranking: ${error.message}`);
@@ -139,9 +221,9 @@ class AiModel {
     static async vote(modelId, userId, voteValue) {
         try {
             // Verificar si existe el modelo
-            const modelExists = await pool.query(
+            const modelExists = await sequelize.query(
                 'SELECT model_id FROM ai_models WHERE model_id = $1',
-                [modelId]
+                { replacements: [modelId] }
             );
 
             if (modelExists.rows.length === 0) {
@@ -158,12 +240,90 @@ class AiModel {
                 RETURNING *
             `;
 
-            const result = await pool.query(query, [modelId, userId, voteValue]);
+            const result = await sequelize.query(query, { replacements: [modelId, userId, voteValue] });
             return result.rows[0];
         } catch (error) {
             throw new Error(`Error registering vote: ${error.message}`);
         }
     }
+
+    static async getModelMetrics(modelId) {
+        try {
+            const query = `
+                SELECT characteristic_name, value
+                FROM model_characteristics
+                WHERE model_id = $1
+                ORDER BY characteristic_name
+            `;
+            const result = await sequelize.query(query, { replacements: [modelId] });
+            return result.rows;
+        } catch (error) {
+            throw new Error(`Error fetching model metrics: ${error.message}`);
+        }
+    }
+
+    static async voteModel(modelId, voteType) {
+        try {
+            const query = `
+                UPDATE ai_models
+                SET ${voteType === 'like' ? 'likes = likes + 1' : 'dislikes = dislikes + 1'}
+                WHERE model_id = $1
+                RETURNING *
+            `;
+            const result = await sequelize.query(query, { replacements: [modelId] });
+            return result.rows[0];
+        } catch (error) {
+            throw new Error(`Error voting model: ${error.message}`);
+        }
+    }
 }
+
+AiModel.init({
+    model_id: {
+        type: DataTypes.INTEGER,
+        primaryKey: true,
+        autoIncrement: true
+    },
+    name: {
+        type: DataTypes.STRING,
+        allowNull: false
+    },
+    description: {
+        type: DataTypes.TEXT,
+        allowNull: false
+    },
+    developer: {
+        type: DataTypes.STRING,
+        allowNull: false
+    },
+    release_date: {
+        type: DataTypes.DATE,
+        allowNull: false
+    },
+    website_url: {
+        type: DataTypes.STRING
+    },
+    documentation_url: {
+        type: DataTypes.STRING
+    },
+    version: {
+        type: DataTypes.STRING,
+        allowNull: false
+    },
+    category_id: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        references: {
+            model: 'categories',
+            key: 'category_id'
+        }
+    }
+}, {
+    sequelize,
+    modelName: 'AiModel',
+    tableName: 'ai_models',
+    timestamps: true,
+    underscored: true
+});
 
 module.exports = AiModel; 

@@ -1,50 +1,36 @@
 const jwt = require('jsonwebtoken');
+const logger = require('../utils/logger');
 const User = require('../models/User');
 
-const auth = async (req, res, next) => {
+const validateToken = (req, res, next) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    
+    if (!token) {
+        return res.status(401).json({ message: 'No token provided' });
+    }
+
     try {
-        // Obtener el token del header
-        const authHeader = req.header('Authorization');
-        if (!authHeader) {
-            return res.status(401).json({ 
-                error: 'No se proporcionó token de autenticación' 
-            });
-        }
-
-        // Verificar formato del token (Bearer token)
-        const token = authHeader.replace('Bearer ', '');
-        if (!token) {
-            return res.status(401).json({ 
-                error: 'Formato de token inválido' 
-            });
-        }
-
-        try {
-            // Verificar y decodificar el token
-            const decoded = jwt.verify(token, process.env.JWT_SECRET);
-            
-            // Verificar que el usuario existe
-            const user = await User.findById(decoded.userId);
-            if (!user) {
-                throw new Error();
-            }
-
-            // Agregar la información del usuario al request
-            req.user = decoded;
-            req.token = token;
-            
-            next();
-        } catch (error) {
-            res.status(401).json({ 
-                error: 'Token inválido o expirado' 
-            });
-        }
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        req.user = decoded;
+        next();
     } catch (error) {
-        console.error('Error en autenticación:', error);
-        res.status(500).json({ 
-            error: 'Error en la autenticación' 
-        });
+        return res.status(401).json({ message: 'Invalid token' });
     }
 };
 
-module.exports = auth; 
+const checkRole = (roles) => {
+    return (req, res, next) => {
+        if (!roles.includes(req.user.role)) {
+            return res.status(403).json({
+                success: false,
+                error: 'No tiene permisos para realizar esta acción'
+            });
+        }
+        next();
+    };
+};
+
+module.exports = {
+    validateToken,
+    checkRole
+}; 

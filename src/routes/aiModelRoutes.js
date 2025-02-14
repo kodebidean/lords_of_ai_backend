@@ -1,22 +1,21 @@
 const express = require('express');
 const router = express.Router();
 const AiModelController = require('../controllers/aiModelController');
-const auth = require('../middleware/auth');
-const { 
-    validateAiModel, 
-    validateStatistics, 
-    validateRanking 
-} = require('../middleware/aiModelValidation');
+const { validateToken } = require('../middleware/auth');
+const { validateAiModel } = require('../middleware/validation/aiModelValidation');
 
 // Rutas públicas
-router.get('/', AiModelController.getAllModels);
+router.get('/', AiModelController.getModels);
 router.get('/:id', AiModelController.getModelById);
+router.get('/:id/metrics', AiModelController.getModelMetrics);
 
-// Rutas protegidas (requieren autenticación)
-router.post('/', [auth, validateAiModel], AiModelController.createModel);
-router.put('/:id', [auth, validateAiModel], AiModelController.updateModel);
-router.post('/:id/statistics', [auth, validateStatistics], AiModelController.updateStatistics);
-router.post('/:id/ranking', [auth, validateRanking], AiModelController.updateRanking);
-router.post('/:id/vote', auth, AiModelController.voteModel);
+// Rutas que requieren autenticación
+router.post('/:id/vote', validateToken, AiModelController.voteModel);
+router.post('/', validateToken, validateAiModel, AiModelController.createModel);
+router.put('/:id', validateToken, validateAiModel, AiModelController.updateModel);
+router.delete('/:id', validateToken, AiModelController.deleteModel);
+router.post('/:id/metrics', validateToken, AiModelController.addModelMetrics);
+router.put('/:id/metrics/:metricId', validateToken, AiModelController.updateModelMetrics);
+router.delete('/:id/metrics/:metricId', validateToken, AiModelController.deleteModelMetrics);
 
 module.exports = router; 
